@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/csv"
+	"errors"
+	"fmt"
 	"log"
 	"math"
 	"os"
@@ -29,10 +31,10 @@ type PriceInfo struct {
 	timeMax string
 }
 
-func readCsvFile(filePath string) [][]string {
+func readCSVFile(filePath string) ([][]string, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
-		log.Fatal("unable to read input file "+filePath, err)
+		return nil, errors.New("unable to read input file " + filePath)
 	}
 	defer f.Close()
 
@@ -40,16 +42,16 @@ func readCsvFile(filePath string) [][]string {
 	records, err := csvReader.ReadAll()
 
 	if err != nil {
-		log.Fatal("unable to parse file as CSV for "+filePath, err)
+		return nil, errors.New("unable to parse file as CSV for " + filePath)
 	}
 
-	return records
+	return records, nil
 }
 
-func writeInCsvFile(records [][]string, filename string) {
+func writeInCSVFile(records [][]string, filename string) error {
 	file, err := os.Create(filename)
 	if err != nil {
-		log.Fatal("can't create file ", err)
+		return errors.New("can't create file ")
 	}
 	defer file.Close()
 
@@ -57,50 +59,69 @@ func writeInCsvFile(records [][]string, filename string) {
 	err = w.WriteAll(records)
 
 	if err != nil {
-		log.Fatalln("error writing csv ", err)
+		return errors.New("error writing csv ")
 	}
+
+	return nil
 }
 
-func makeTradeRecord(record []string) TradeRecord {
-	userID, err := strconv.Atoi(record[0])
+func makeTradeRecord(record []string) (*TradeRecord, error) {
+	const (
+		UserIDIndex    = 0
+		TickerIndex    = 2
+		BuyPriceIndex  = 3
+		SellPriceIndex = 4
+	)
+
+	userID, err := strconv.Atoi(record[UserIDIndex])
 	if err != nil {
-		log.Fatal("can't convert id's string into int ", err)
+		return nil, errors.New("can't convert id's string into int ")
 	}
 
-	ticker := record[2]
+	ticker := record[TickerIndex]
 
-	buyPrice, err := strconv.ParseFloat(record[3], 64)
+	buyPrice, err := strconv.ParseFloat(record[BuyPriceIndex], 64)
 	if err != nil {
-		log.Fatal("can't convert purchase price's string into float64 ", err)
+		return nil, errors.New("can't convert purchase price's string into float64 ")
 	}
 
-	sellPrice, err := strconv.ParseFloat(record[4], 64)
+	sellPrice, err := strconv.ParseFloat(record[SellPriceIndex], 64)
 	if err != nil {
-		log.Fatal("can't convert selling price's string into float64 ", err)
+		return nil, errors.New("can't convert selling price's string into float64 ")
 	}
 
-	return TradeRecord{userID, ticker, buyPrice, sellPrice}
+	return &TradeRecord{userID, ticker, buyPrice, sellPrice}, nil
 }
 
-func makeCandleRecord(record []string) CandleRecord {
-	ticker := record[0]
-	time := record[1]
-	maxPrice, err := strconv.ParseFloat(record[3], 64)
+func makeCandleRecord(record []string) (*CandleRecord, error) {
+	const (
+		TickerIndex   = 0
+		TimeIndex     = 1
+		MaxPriceIndex = 3
+		MinPriceIndex = 4
+	)
+
+	ticker := record[TickerIndex]
+	time := record[TimeIndex]
+	maxPrice, err := strconv.ParseFloat(record[MaxPriceIndex], 64)
 
 	if err != nil {
-		log.Fatal("can't convert max price's string into float64 ", err)
+		return nil, errors.New("can't convert max price's string into float64 ")
 	}
 
-	minPrice, err := strconv.ParseFloat(record[4], 64)
+	minPrice, err := strconv.ParseFloat(record[MinPriceIndex], 64)
 	if err != nil {
-		log.Fatal("can't convert min price's string into float64 ", err)
+		return nil, errors.New("can't convert min price's string into float64 ")
 	}
 
-	return CandleRecord{ticker, time, maxPrice, minPrice}
+	return &CandleRecord{ticker, time, maxPrice, minPrice}, nil
 }
 
-func addTrade(trades map[int]map[string][]float64, record []string) {
-	rec := makeTradeRecord(record)
+func addTrade(trades map[int]map[string][]float64, record []string) error {
+	rec, err := makeTradeRecord(record)
+	if err != nil {
+		return fmt.Errorf("%w", err)
+	}
 
 	idInfo, ok := trades[rec.id]
 	if !ok {
@@ -127,6 +148,8 @@ func addTrade(trades map[int]map[string][]float64, record []string) {
 			idInfo[rec.ticker] = tickerInfo
 		}
 	}
+
+	return nil
 }
 
 func updatePriceInfo(old PriceInfo, newRec CandleRecord) PriceInfo {
@@ -144,8 +167,11 @@ func updatePriceInfo(old PriceInfo, newRec CandleRecord) PriceInfo {
 	return result
 }
 
-func addCandle(candles map[string]PriceInfo, record []string) {
-	rec := makeCandleRecord(record)
+func addCandle(candles map[string]PriceInfo, record []string) error {
+	rec, err := makeCandleRecord(record)
+	if err != nil {
+		return fmt.Errorf("%w", err)
+	}
 
 	info, ok := candles[rec.ticker]
 	if !ok {
@@ -153,27 +179,35 @@ func addCandle(candles map[string]PriceInfo, record []string) {
 		info = priceInfo
 	}
 
-	candles[rec.ticker] = updatePriceInfo(info, rec)
+	candles[rec.ticker] = updatePriceInfo(info, *rec)
+
+	return nil
 }
 
-func parseTradesInfo(tradesInfo [][]string) map[int]map[string][]float64 {
+func parseTradesInfo(tradesInfo [][]string) (map[int]map[string][]float64, error) {
 	trades := make(map[int]map[string][]float64)
 
 	for _, record := range tradesInfo {
-		addTrade(trades, record)
+		err := addTrade(trades, record)
+		if err != nil {
+			return nil, fmt.Errorf("%w", err)
+		}
 	}
 
-	return trades
+	return trades, nil
 }
 
-func parseCandleInfo(candleInfo [][]string) map[string]PriceInfo {
+func parseCandleInfo(candleInfo [][]string) (map[string]PriceInfo, error) {
 	candles := make(map[string]PriceInfo)
 
 	for _, record := range candleInfo {
-		addCandle(candles, record)
+		err := addCandle(candles, record)
+		if err != nil {
+			return nil, fmt.Errorf("%w", err)
+		}
 	}
 
-	return candles
+	return candles, nil
 }
 
 func makeRecord(id int, ticker string, prices []float64, priceInfo PriceInfo) []string {
@@ -208,11 +242,30 @@ func prepareForOutput(trades map[int]map[string][]float64, candles map[string]Pr
 }
 
 func main() {
-	tradesInfo := readCsvFile("user_trades.csv")
-	candlesInfo := readCsvFile("candles_5m.csv")
-	trades := parseTradesInfo(tradesInfo)
-	candles := parseCandleInfo(candlesInfo)
+	tradesInfo, err := readCSVFile("user_trades.csv")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	candlesInfo, err := readCSVFile("candles_5m.csv")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	trades, err := parseTradesInfo(tradesInfo)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	candles, err := parseCandleInfo(candlesInfo)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	records := prepareForOutput(trades, candles)
-	writeInCsvFile(records, "output.csv")
+
+	err = writeInCSVFile(records, "output.csv")
+	if err != nil {
+		log.Fatal(err)
+	}
 }
